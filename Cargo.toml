@@ -1,0 +1,14 @@
+[package]
+name = "nbd-netlink"
+version = "0.1.0"
+authors = ["Josh Triplett <josh@joshtriplett.org>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/joshtriplett/nbd-netlink"
+description = "Set up an NBD device for a specified socket and parameters, using the Linux netlink interface"
+keywords = ["nbd", "network-block-device", "linux", "netlink", "neli"]
+categories = ["api-bindings", "network-programming", "os::unix-apis"]
+
+[dependencies]
+anyhow = "1.0.32"
+neli = "0.4.4"
