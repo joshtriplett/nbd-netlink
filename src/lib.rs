@@ -79,6 +79,7 @@ use private::*;
 
 const HAS_FLAGS: u64 = 1 << 0;
 const READ_ONLY: u64 = 1 << 1;
+const CAN_MULTI_CONN: u64 = 1 << 8;
 
 const NBD_CFLAG_DISCONNECT_ON_CLOSE: u64 = 1 << 1;
 
@@ -141,6 +142,16 @@ impl NBDConnect {
             self.server_flags |= READ_ONLY;
         } else {
             self.server_flags &= !READ_ONLY;
+        }
+        self
+    }
+
+    /// Set the device as allowing multiple concurrent socket connections.
+    pub fn can_multi_conn(&mut self, can_multi_conn: bool) -> &mut Self {
+        if can_multi_conn {
+            self.server_flags |= CAN_MULTI_CONN;
+        } else {
+            self.server_flags &= !CAN_MULTI_CONN;
         }
         self
     }
