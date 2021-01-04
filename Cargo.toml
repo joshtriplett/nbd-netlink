@@ -1,6 +1,6 @@
 [package]
 name = "nbd-netlink"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Josh Triplett <josh@joshtriplett.org>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
@@ -11,4 +11,4 @@ categories = ["api-bindings", "network-programming", "os::unix-apis"]
 
 [dependencies]
 anyhow = "1.0.32"
-neli = "0.4.4"
+neli = "0.5.2"

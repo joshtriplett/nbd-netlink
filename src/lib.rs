@@ -23,59 +23,59 @@ compile_error!("Netlink only works on Linux");
 
 use std::os::unix::io::AsRawFd;
 
-use anyhow::{bail, Context};
+use anyhow::{anyhow, Context};
 use neli::{
-    consts::{NlFamily, NlmF},
-    genl::Genlmsghdr,
-    nl::Nlmsghdr,
-    nlattr::Nlattr,
-    socket::NlSocket,
+    consts::genl::NlAttrType,
+    consts::nl::{NlmF, NlmFFlags},
+    consts::socket::NlFamily,
+    err::NlError,
+    genl::{Genlmsghdr, Nlattr},
+    impl_var,
+    nl::{NlPayload, Nlmsghdr},
+    socket::NlSocketHandle,
+    types::{Buffer, GenlBuffer},
+    Nl,
 };
 
-// `neli::impl_var_trait` defines a pub enum, so wrap it in a private module to avoid exposing it.
-mod private {
-    use neli::{
-        consts::{Cmd, NlAttrType},
-        {impl_var, impl_var_base, impl_var_trait},
-    };
+impl_var!(
+    NbdCmd, u8,
+    Unspec => 0,
+    Connect => 1,
+    Disconnect => 2,
+    Reconfigure => 3,
+    LinkDead => 4,
+    Status => 5
+);
+impl neli::consts::genl::Cmd for NbdCmd {}
 
-    impl_var_trait!(
-        NbdCmd, u8, Cmd,
-        Unspec => 0,
-        Connect => 1,
-        Disconnect => 2,
-        Reconfigure => 3,
-        LinkDead => 4,
-        Status => 5
-    );
+impl_var!(
+    NbdAttr, u16,
+    Unspec => 0,
+    Index => 1,
+    SizeBytes => 2,
+    BlockSizeBytes => 3,
+    Timeout => 4,
+    ServerFlags => 5,
+    ClientFlags => 6,
+    Sockets => 7,
+    DeadConnTimeout => 8,
+    DeviceList => 9
+);
+impl NlAttrType for NbdAttr {}
 
-    impl_var_trait!(
-        NbdAttr, u16, NlAttrType,
-        Unspec => 0,
-        Index => 1,
-        SizeBytes => 2,
-        BlockSizeBytes => 3,
-        Timeout => 4,
-        ServerFlags => 5,
-        ClientFlags => 6,
-        Sockets => 7,
-        DeadConnTimeout => 8,
-        DeviceList => 9
-    );
+impl_var!(
+    NbdSockItem, u16,
+    Unspec => 0,
+    Item => 1
+);
+impl NlAttrType for NbdSockItem {}
 
-    impl_var_trait!(
-        NbdSockItem, u16, NlAttrType,
-        Unspec => 0,
-        Item => 1
-    );
-
-    impl_var_trait!(
-        NbdSock, u16, NlAttrType,
-        Unspec => 0,
-        Fd => 1
-    );
-}
-use private::*;
+impl_var!(
+    NbdSock, u16,
+    Unspec => 0,
+    Fd => 1
+);
+impl NlAttrType for NbdSock {}
 
 const HAS_FLAGS: u64 = 1 << 0;
 const READ_ONLY: u64 = 1 << 1;
@@ -85,9 +85,8 @@ const NBD_CFLAG_DISCONNECT_ON_CLOSE: u64 = 1 << 1;
 
 /// An NBD netlink socket, usable to set up NBD devices.
 pub struct NBD {
-    nl: NlSocket,
+    nl: NlSocketHandle,
     nbd_family: u16,
-    _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,
 }
 
 impl NBD {
@@ -97,11 +96,11 @@ impl NBD {
     /// the kernel does not have `nbd` support, or if it has `nbd` built as a module and not
     /// loaded, this will result in an error.
     pub fn new() -> anyhow::Result<Self> {
-        let mut nl = NlSocket::new(NlFamily::Generic, true)?;
+        let mut nl = NlSocketHandle::new(NlFamily::Generic)?;
         let nbd_family = nl
             .resolve_genl_family("nbd")
             .context("Could not resolve the NBD generic netlink family")?;
-        Ok(Self { nl, nbd_family, _not_sync: std::marker::PhantomData })
+        Ok(Self { nl, nbd_family })
     }
 }
 
@@ -174,37 +173,41 @@ impl NBDConnect {
         nbd: &mut NBD,
         sockets: impl IntoIterator<Item = &'a (impl AsRawFd + 'a)>,
     ) -> anyhow::Result<u32> {
-        let mut sockets_attr = Nlattr::new(None, NbdAttr::Sockets, Vec::<u8>::new())?;
+        fn attr<T: NlAttrType, P: Nl>(t: T, p: P) -> Result<Nlattr<T, Buffer>, NlError> {
+            Nlattr::new(None, false, false, t, p)
+        }
+        let mut sockets_attr = Nlattr::new(None, true, false, NbdAttr::Sockets, Buffer::new())?;
         for socket in sockets {
             sockets_attr.add_nested_attribute(&Nlattr::new(
                 None,
+                true,
+                false,
                 NbdSockItem::Item,
-                Nlattr::new(None, NbdSock::Fd, socket.as_raw_fd())?,
+                attr(NbdSock::Fd, socket.as_raw_fd())?,
             )?)?;
         }
-        let attrs = vec![
-            Nlattr::new(None, NbdAttr::SizeBytes, self.size_bytes)?,
-            Nlattr::new(None, NbdAttr::BlockSizeBytes, self.block_size_bytes)?,
-            Nlattr::new(None, NbdAttr::ServerFlags, self.server_flags)?,
-            Nlattr::new(None, NbdAttr::ClientFlags, self.client_flags)?,
-            sockets_attr,
-        ];
+        let mut attrs = GenlBuffer::new();
+        attrs.push(attr(NbdAttr::SizeBytes, self.size_bytes)?);
+        attrs.push(attr(NbdAttr::BlockSizeBytes, self.block_size_bytes)?);
+        attrs.push(attr(NbdAttr::ServerFlags, self.server_flags)?);
+        attrs.push(attr(NbdAttr::ClientFlags, self.client_flags)?);
+        attrs.push(sockets_attr);
 
-        let genl_header = Genlmsghdr::new(NbdCmd::Connect, 1, attrs)?;
+        let genl_header = Genlmsghdr::new(NbdCmd::Connect, 1, attrs);
         let nl_header = Nlmsghdr::new(
             None,
             nbd.nbd_family,
-            vec![NlmF::Request],
+            NlmFFlags::new(&[NlmF::Request]),
             None,
             None,
-            genl_header,
+            NlPayload::Payload(genl_header),
         );
-        nbd.nl.send_nl(nl_header)?;
-        let response: Nlmsghdr<u16, Genlmsghdr<NbdCmd, NbdAttr>> = nbd.nl.recv_nl(None)?;
-        if response.nl_type != nbd.nbd_family {
-            bail!("Error connecting NBD device");
-        }
-        let handle = response.nl_payload.get_attr_handle();
+        nbd.nl.send(nl_header)?;
+        let response: Nlmsghdr<u16, Genlmsghdr<NbdCmd, NbdAttr>> = nbd
+            .nl
+            .recv()?
+            .ok_or_else(|| anyhow!("Error connecting NBD device: No response received"))?;
+        let handle = response.get_payload()?.get_attr_handle();
         let index = handle.get_attr_payload_as::<u32>(NbdAttr::Index)?;
         Ok(index)
     }
