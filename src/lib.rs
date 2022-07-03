@@ -28,53 +28,53 @@ use neli::{
     consts::genl::NlAttrType,
     consts::nl::{NlmF, NlmFFlags},
     consts::socket::NlFamily,
-    err::NlError,
+    err::SerError,
     genl::{Genlmsghdr, Nlattr},
-    impl_var,
     nl::{NlPayload, Nlmsghdr},
     socket::NlSocketHandle,
     types::{Buffer, GenlBuffer},
-    Nl,
+    Size, ToBytes,
 };
+use neli_proc_macros::neli_enum;
 
-impl_var!(
-    NbdCmd, u8,
-    Unspec => 0,
-    Connect => 1,
-    Disconnect => 2,
-    Reconfigure => 3,
-    LinkDead => 4,
-    Status => 5
-);
+#[neli_enum(serialized_type = "u8")]
+enum NbdCmd {
+    Unspec = 0,
+    Connect = 1,
+    Disconnect = 2,
+    Reconfigure = 3,
+    LinkDead = 4,
+    Status = 5,
+}
 impl neli::consts::genl::Cmd for NbdCmd {}
 
-impl_var!(
-    NbdAttr, u16,
-    Unspec => 0,
-    Index => 1,
-    SizeBytes => 2,
-    BlockSizeBytes => 3,
-    Timeout => 4,
-    ServerFlags => 5,
-    ClientFlags => 6,
-    Sockets => 7,
-    DeadConnTimeout => 8,
-    DeviceList => 9
-);
+#[neli_enum(serialized_type = "u16")]
+enum NbdAttr {
+    Unspec = 0,
+    Index = 1,
+    SizeBytes = 2,
+    BlockSizeBytes = 3,
+    Timeout = 4,
+    ServerFlags = 5,
+    ClientFlags = 6,
+    Sockets = 7,
+    DeadConnTimeout = 8,
+    DeviceList = 9,
+}
 impl NlAttrType for NbdAttr {}
 
-impl_var!(
-    NbdSockItem, u16,
-    Unspec => 0,
-    Item => 1
-);
+#[neli_enum(serialized_type = "u16")]
+enum NbdSockItem {
+    Unspec = 0,
+    Item = 1,
+}
 impl NlAttrType for NbdSockItem {}
 
-impl_var!(
-    NbdSock, u16,
-    Unspec => 0,
-    Fd => 1
-);
+#[neli_enum(serialized_type = "u16")]
+enum NbdSock {
+    Unspec = 0,
+    Fd = 1,
+}
 impl NlAttrType for NbdSock {}
 
 const HAS_FLAGS: u64 = 1 << 0;
@@ -173,13 +173,15 @@ impl NBDConnect {
         nbd: &mut NBD,
         sockets: impl IntoIterator<Item = &'a (impl AsRawFd + 'a)>,
     ) -> anyhow::Result<u32> {
-        fn attr<T: NlAttrType, P: Nl>(t: T, p: P) -> Result<Nlattr<T, Buffer>, NlError> {
-            Nlattr::new(None, false, false, t, p)
+        fn attr<T: NlAttrType>(
+            t: T,
+            p: impl Size + ToBytes,
+        ) -> Result<Nlattr<T, Buffer>, SerError> {
+            Nlattr::new(false, false, t, p)
         }
-        let mut sockets_attr = Nlattr::new(None, true, false, NbdAttr::Sockets, Buffer::new())?;
+        let mut sockets_attr = Nlattr::new(true, false, NbdAttr::Sockets, Buffer::new())?;
         for socket in sockets {
             sockets_attr.add_nested_attribute(&Nlattr::new(
-                None,
                 true,
                 false,
                 NbdSockItem::Item,
